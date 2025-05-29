@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Attendance Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode@latest"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 1rem; text-align: center; }
+    #mode-buttons { margin-bottom: 1rem; }
+    .mode-btn { padding: .5rem 1rem; margin: 0 .25rem; border: none; cursor: pointer; }
+    .active  { background: #007bff; color: white; }
+    .inactive{ background: #eee; color: #333; }
+    #reader-container { position: relative; width: 300px; margin: 0 auto 1rem; }
+    #reader { width: 100%; }
+    #switch-btn { position: absolute; top: 5px; right: 5px; padding: .25rem .5rem; font-size: .8rem; display: none; z-index: 1000; }
+    #present-count { margin: 0 0 1rem 0; }
+    #result { margin-top: 1rem; font-size: 1rem; }
+    .message { padding: .5rem; border-radius: 4px; display: inline-block; }
+    .success { background: #e0ffe0; }
+    .error   { background: #ffe0e0; }
+  </style>
+</head>
+<body>
+  <h1>Attendance Scanner</h1>
+  <div id="mode-buttons">
+    <button id="btn-in"  class="mode-btn active">Scan In</button>
+    <button id="btn-out" class="mode-btn inactive">Scan Out</button>
+  </div>
+  <p id="present-count">Loading…</p>
+  <div id="reader-container">
+    <div id="reader"></div>
+    <button id="switch-btn">Switch Camera</button>
+  </div>
+  <div id="result" class="message"></div>
+
+  <script>
+    let html5QrCode, cameras = [], camIdx = 0, paused = false;
+    const DEBOUNCE = 3000, FPS = 10, QRBOX = 250;
+    let currentMode = 'in';
+
+    // Mode toggle handlers
+    document.getElementById('btn-in').onclick = () => {
+      currentMode = 'in';
+      document.getElementById('btn-in').classList.add('active');
+      document.getElementById('btn-in').classList.remove('inactive');
+      document.getElementById('btn-out').classList.add('inactive');
+      document.getElementById('btn-out').classList.remove('active');
+    };
+    document.getElementById('btn-out').onclick = () => {
+      currentMode = 'out';
+      document.getElementById('btn-out').classList.add('active');
+      document.getElementById('btn-out').classList.remove('inactive');
+      document.getElementById('btn-in').classList.add('inactive');
+      document.getElementById('btn-in').classList.remove('active');
+    };
+
+    function updateCount() {
+      google.script.run
+        .withSuccessHandler(n => {
+          document.getElementById('present-count')
+                  .textContent = `There are ${n} students present`;
+        })
+        .withFailureHandler(_ => {
+          document.getElementById('present-count')
+                  .textContent = 'Error loading count';
+        })
+        .getPresentCount();
+    }
+
+    function onScanSuccess(text) {
+      if (paused) return;
+      paused = true;
+      const r = document.getElementById('result');
+      r.textContent = 'Processing…';
+      r.className = 'message';
+
+      google.script.run
+        .withSuccessHandler(resp => {
+          const r = document.getElementById('result');
+          if (!resp.success) {
+            r.textContent = 'Error: ' + resp.message;
+            r.className   = 'message error';
+          } else if (resp.unchanged) {
+            r.textContent = resp.message;
+            r.className   = 'message error';
+          } else {
+            if (resp.state === 'in') {
+              r.textContent = `ID ${resp.id} signed IN at ${resp.timestamp}`;
+            } else {
+              r.textContent = `ID ${resp.id} signed OUT at ${resp.timestamp}`;
+            }
+            r.className = 'message success';
+            updateCount();
+          }
+          // re-enable scanning and clear after debounce
+          setTimeout(() => {
+            paused = false;
+            r.textContent = '';
+          }, DEBOUNCE);
+        })
+        .withFailureHandler(err => {
+          const r = document.getElementById('result');
+          r.textContent = '❌ ' + err.message;
+          r.className   = 'message error';
+          setTimeout(() => {
+            paused = false;
+          }, DEBOUNCE);
+        })
+        .recordScan(text, currentMode);
+    }
+
+    function onScanFailure(err) {
+      // ignore minor scan failures
+    }
+
+    function startCam(deviceId) {
+      html5QrCode.start(
+        { deviceId: { exact: deviceId } },
+        { fps: FPS, qrbox: QRBOX },
+        onScanSuccess,
+        onScanFailure
+      ).catch(e => {
+        const r = document.getElementById('result');
+        r.textContent = 'Camera error: ' + e;
+        r.className   = 'message error';
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      updateCount();
+      html5QrCode = new Html5Qrcode('reader');
+      Html5Qrcode.getCameras()
+        .then(list => {
+          cameras = list;
+          if (!cameras.length) throw 'No cameras found';
+          // show switch button if multiple cameras available
+          if (cameras.length > 1) {
+            const sb = document.getElementById('switch-btn');
+            sb.style.display = 'block';
+            sb.onclick = () => {
+              html5QrCode.stop().then(() => {
+                camIdx = (camIdx + 1) % cameras.length;
+                startCam(cameras[camIdx].id);
+              });
+            };
+          }
+          // start with the first camera
+          startCam(cameras[0].id);
+        })
+        .catch(e => {
+          const r = document.getElementById('result');
+          r.textContent = 'Camera access error: ' + e;
+          r.className   = 'message error';
+        });
+    });
+  </script>
+</body>
+</html>
