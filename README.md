@@ -1,6 +1,6 @@
 # QRollCall by Joris Wilson
 
-A lightweight, QR-powered attendance system for after-school programs, built entirely on Google Sheets and Apps Script.
+A lightweight, QR-powered attendance system for school, built entirely on Google Sheets and Apps Script.
 
 ## Key Features
 
